@@ -1,2 +1,2 @@
 #!/bin/bash
-python3 zero-paint.py
+python3 zero-paint.py "$@"
