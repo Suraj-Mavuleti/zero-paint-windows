@@ -1,125 +1,139 @@
-import customtkinter as ctk
-import threading
-import time
-import math
-import socket
-import urllib.request
-import json
-import sqlite3
-import random
+import sys
+import gi
+import os
+gi.require_version('Gtk', '3.0')
+from gi.repository import Gtk, Gdk, GLib, cairo
 
-ctk.set_appearance_mode("dark")
-
-class App(ctk.CTk):
+class ZeroPaint(Gtk.Window):
     def __init__(self):
-        super().__init__()
-        self.title("Zero Paint Console")
-        self.geometry("1100x750")
+        super().__init__(title="Zero Paint - Ultimate Studio")
+        self.set_default_size(1400, 900)
         
-        # Premium Enterprise Color Palette
-        self.bg_color = "#0B0C10"          # Deep rich black/gray
-        self.sidebar_color = "#1F2833"     # Slate gray sidebar
-        self.accent_color = "#66FCF1"      # Neon cyan accent
-        self.text_primary = "#FFFFFF"      # Crisp white
-        self.text_secondary = "#C5C6C7"    # Soft gray text
-        self.panel_bg = "#161920"          # Slightly raised panel
+        self.header = Gtk.HeaderBar()
+        self.header.set_show_close_button(True)
+        self.header.props.title = ""
+        self.header.get_style_context().add_class("hidden-header")
+        self.set_titlebar(self.header)
         
-        self.configure(fg_color=self.bg_color)
+        self.setup_css()
         
-        self.grid_rowconfigure(0, weight=1)
-        self.grid_columnconfigure(1, weight=1)
+        main_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        self.add(main_box)
         
-        # Sidebar Navigation
-        self.sidebar = ctk.CTkFrame(self, width=240, corner_radius=0, fg_color=self.sidebar_color)
-        self.sidebar.grid(row=0, column=0, sticky="nsew")
-        self.sidebar.grid_rowconfigure(5, weight=1)
+        # ================= LEFT TOOLBAR (Tools) =================
+        self.toolbar_left = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        self.toolbar_left.set_size_request(60, -1)
+        self.toolbar_left.get_style_context().add_class("toolbar-side")
+        main_box.pack_start(self.toolbar_left, False, False, 0)
         
-        # Branding
-        self.logo_label = ctk.CTkLabel(self.sidebar, text="PAINT", font=ctk.CTkFont("Segoe UI", size=26, weight="bold"), text_color=self.accent_color)
-        self.logo_label.grid(row=0, column=0, padx=25, pady=(35, 5), sticky="w")
+        tools = ["🖌️", "✏️", "🧽", "🪣", "✂️", "🪄", "T", "✋", "🔍"]
+        for t in tools:
+            btn = Gtk.Button(label=t)
+            btn.get_style_context().add_class("tool-btn")
+            self.toolbar_left.pack_start(btn, False, False, 0)
+            
+        color_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        color_box.get_style_context().add_class("color-picker")
+        color_box.set_size_request(40, 40)
+        color_box.set_margin_top(20)
+        self.toolbar_left.pack_start(color_box, False, False, 0)
         
-        self.version_label = ctk.CTkLabel(self.sidebar, text="Enterprise Edition v8.5", font=ctk.CTkFont("Segoe UI", size=12), text_color=self.text_secondary)
-        self.version_label.grid(row=1, column=0, padx=25, pady=(0, 35), sticky="w")
+        # ================= CANVAS =================
+        self.workspace = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.workspace.get_style_context().add_class("workspace")
+        main_box.pack_start(self.workspace, True, True, 0)
         
-        # Nav Buttons
-        self.btn_dash = ctk.CTkButton(self.sidebar, text="  Overview", font=ctk.CTkFont("Segoe UI", size=14, weight="bold"), fg_color=self.panel_bg, text_color=self.text_primary, anchor="w", hover_color=self.accent_color)
-        self.btn_dash.grid(row=2, column=0, padx=15, pady=8, sticky="ew")
+        top_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        top_bar.get_style_context().add_class("top-bar")
+        self.workspace.pack_start(top_bar, False, False, 0)
         
-        self.btn_set = ctk.CTkButton(self.sidebar, text="  Configuration", font=ctk.CTkFont("Segoe UI", size=14), fg_color="transparent", text_color=self.text_secondary, anchor="w", hover_color=self.panel_bg)
-        self.btn_set.grid(row=3, column=0, padx=15, pady=8, sticky="ew")
+        l_doc = Gtk.Label(label="Untitled-1 @ 100% (RGB/8)")
+        l_doc.get_style_context().add_class("doc-title")
+        l_doc.set_margin_start(20)
+        top_bar.pack_start(l_doc, False, False, 0)
         
-        self.btn_logs = ctk.CTkButton(self.sidebar, text="  Diagnostics", font=ctk.CTkFont("Segoe UI", size=14), fg_color="transparent", text_color=self.text_secondary, anchor="w", hover_color=self.panel_bg)
-        self.btn_logs.grid(row=4, column=0, padx=15, pady=8, sticky="ew")
+        canvas_align = Gtk.Alignment.new(0.5, 0.5, 0, 0)
+        self.canvas = Gtk.DrawingArea()
+        self.canvas.set_size_request(800, 600)
+        self.canvas.get_style_context().add_class("canvas-area")
+        self.canvas.connect("draw", self.on_draw)
+        canvas_align.add(self.canvas)
         
-        # Main Work Area
-        self.main_view = ctk.CTkFrame(self, fg_color=self.bg_color, corner_radius=0)
-        self.main_view.grid(row=0, column=1, sticky="nsew", padx=30, pady=30)
+        scroll = Gtk.ScrolledWindow()
+        scroll.add(canvas_align)
+        self.workspace.pack_start(scroll, True, True, 0)
         
-        self.header = ctk.CTkLabel(self.main_view, text="Zero Paint Console", font=ctk.CTkFont("Segoe UI", size=32, weight="bold"), text_color=self.text_primary)
-        self.header.pack(anchor="w", pady=(0, 20))
+        # ================= RIGHT PANEL (Layers) =================
+        self.panel_right = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.panel_right.set_size_request(280, -1)
+        self.panel_right.get_style_context().add_class("panel-right")
+        main_box.pack_start(self.panel_right, False, False, 0)
         
-        # Premium Content Glass Panel
-        self.main_frame = ctk.CTkFrame(self.main_view, fg_color=self.panel_bg, corner_radius=15, border_width=1, border_color="#2A2F3A")
-        self.main_frame.pack(fill=ctk.BOTH, expand=True)
+        l_layers = Gtk.Label(label="LAYERS")
+        l_layers.get_style_context().add_class("section-label")
+        l_layers.set_halign(Gtk.Align.START)
+        l_layers.set_margin_start(20)
+        l_layers.set_margin_top(20)
+        l_layers.set_margin_bottom(10)
+        self.panel_right.pack_start(l_layers, False, False, 0)
         
-        self.setup_ui()
+        layers = ["Layer 3", "Layer 2", "Background"]
+        for i, l in enumerate(layers):
+            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+            box.get_style_context().add_class("layer-row")
+            if i == 0:
+                box.get_style_context().add_class("layer-selected")
+            
+            eye = Gtk.Label(label="👁️")
+            eye.set_margin_start(10)
+            eye.set_margin_end(10)
+            
+            lbl = Gtk.Label(label=l)
+            lbl.get_style_context().add_class("layer-name")
+            
+            box.pack_start(eye, False, False, 0)
+            box.pack_start(lbl, False, False, 0)
+            self.panel_right.pack_start(box, False, False, 2)
+            
+    def on_draw(self, widget, cr):
+        cr.set_source_rgb(1, 1, 1)
+        cr.paint()
         
-    
-    def setup_ui(self):
-        # Service Status Top Bar
-        status_bar = ctk.CTkFrame(self.main_frame, fg_color="transparent")
-        status_bar.pack(fill=ctk.X, padx=25, pady=25)
+        # Draw something abstract
+        cr.set_source_rgba(0.9, 0.2, 0.5, 0.8)
+        cr.arc(400, 300, 150, 0, 2*3.14)
+        cr.fill()
         
-        self.status_indicator = ctk.CTkLabel(status_bar, text="● OFFLINE", font=ctk.CTkFont(size=16, weight="bold"), text_color="#FF453A")
-        self.status_indicator.pack(side=ctk.LEFT)
-        
-        self.uptime_label = ctk.CTkLabel(status_bar, text="System Uptime: 00:00:00", font=ctk.CTkFont(size=14), text_color=self.text_secondary)
-        self.uptime_label.pack(side=ctk.RIGHT)
-        
-        # Log terminal
-        self.log = ctk.CTkTextbox(self.main_frame, font=ctk.CTkFont("Consolas", 14), fg_color="#08090C", text_color="#45A29E", corner_radius=10, border_width=1, border_color="#1F2833")
-        self.log.pack(fill=ctk.BOTH, expand=True, padx=25, pady=(0, 25))
-        self.log.insert("0.0", "Enterprise subsystem initialized. Awaiting user command parameters...\n")
-        
-        # Control Buttons
-        btn_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
-        btn_frame.pack(fill=ctk.X, padx=25, pady=(0, 25))
-        
-        self.start_btn = ctk.CTkButton(btn_frame, text="▶ Initialize Engine", font=ctk.CTkFont(size=16, weight="bold"), height=45, corner_radius=8, fg_color=self.accent_color, hover_color="#45A29E", text_color="#000000", command=self.start)
-        self.start_btn.pack(side=ctk.LEFT, expand=True, padx=10)
-        
-        self.stop_btn = ctk.CTkButton(btn_frame, text="■ Terminate Process", font=ctk.CTkFont(size=16, weight="bold"), height=45, corner_radius=8, fg_color="#FF453A", hover_color="#DC3545", text_color="#FFFFFF", state="disabled", command=self.stop)
-        self.stop_btn.pack(side=ctk.LEFT, expand=True, padx=10)
-        
-        self.running = False
-        
-    def start(self):
-        if self.running: return
-        self.running = True
-        self.status_indicator.configure(text="● ONLINE (SECURE)", text_color=self.accent_color)
-        self.start_btn.configure(state="disabled", fg_color="#1F2833", text_color=self.text_secondary)
-        self.stop_btn.configure(state="normal", fg_color="#FF453A", text_color="#FFFFFF")
-        self.log.insert("end", "\n[+] Booting enterprise kernel modules...\n[+] Establishing 256-bit encrypted socket channels...")
-        threading.Thread(target=self.run_service, daemon=True).start()
-        
-    def stop(self):
-        self.running = False
-        self.status_indicator.configure(text="● OFFLINE", text_color="#FF453A")
-        self.start_btn.configure(state="normal", fg_color=self.accent_color, text_color="#000000")
-        self.stop_btn.configure(state="disabled", fg_color="#1F2833", text_color=self.text_secondary)
-        self.log.insert("end", "\n[-] Graceful shutdown sequence initiated...\n[-] Service halted securely.")
-        self.log.see("end")
-        
-    def run_service(self):
-        counter = 0
-        while self.running:
-            time.sleep(1.2)
-            counter += 1
-            if self.running:
-                self.log.insert("end", f"\n[TICK] Core sync optimal. Node throughput: {random.randint(100, 999)} ops/s | Cycles: {counter}")
-                self.log.see("end")
+        cr.set_source_rgba(0.2, 0.5, 0.9, 0.6)
+        cr.arc(300, 200, 100, 0, 2*3.14)
+        cr.fill()
 
+    def setup_css(self):
+        css = b'''
+            window { background-color: #1e1e1e; }
+            .hidden-header { background: #1e1e1e; min-height: 0px; padding: 0px; border: none; box-shadow: none; }
+            .toolbar-side { background-color: #252526; border-right: 1px solid #333333; padding-top: 10px; }
+            .tool-btn { background: transparent; color: #CCCCCC; border: none; font-size: 20px; padding: 12px; transition: all 0.2s; border-radius: 8px; margin: 2px 5px; }
+            .tool-btn:hover { background: rgba(255,255,255,0.1); color: #FFFFFF; }
+            .color-picker { background-color: #FF0066; border-radius: 20px; border: 3px solid #FFFFFF; margin-left: 10px; margin-right: 10px; }
+            .workspace { background-color: #111111; }
+            .top-bar { background-color: #2d2d2d; padding: 10px; border-bottom: 1px solid #000000; }
+            .doc-title { color: #cccccc; font-size: 13px; font-weight: bold; }
+            .canvas-area { box-shadow: 0 0 20px rgba(0,0,0,0.8); }
+            .panel-right { background-color: #252526; border-left: 1px solid #333333; }
+            .section-label { color: #888888; font-size: 11px; font-weight: 900; letter-spacing: 1px; }
+            .layer-row { background: transparent; padding: 8px 0px; margin: 0 10px; border-radius: 5px; }
+            .layer-row:hover { background: rgba(255,255,255,0.05); }
+            .layer-selected { background: #094771; }
+            .layer-selected:hover { background: #094771; }
+            .layer-name { color: #FFFFFF; font-size: 13px; }
+        '''
+        provider = Gtk.CssProvider()
+        provider.load_from_data(css)
+        Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
 if __name__ == "__main__":
-    app = App()
-    app.mainloop()
+    win = ZeroPaint()
+    win.connect("destroy", Gtk.main_quit)
+    win.show_all()
+    Gtk.main()
